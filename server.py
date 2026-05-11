@@ -8,6 +8,8 @@ from mcp.server.stdio import stdio_server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
 from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
 from starlette.routing import Route
 import uvicorn
 
@@ -47,6 +49,11 @@ HANDLERS = {
 }
 
 
+@app.list_tools()
+async def list_tools() -> list[Tool]:
+    return TOOLS
+
+
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls by dispatching to the appropriate handler."""
@@ -62,7 +69,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     ]
 
 
-
 # ── Transport selection ───────────────────────────────────────────────────────
 
 async def run_stdio():
@@ -73,20 +79,35 @@ async def run_stdio():
 
 
 def run_sse(host: str, port: int):
-    """Run the EHS MCP Server using SSE transport."""
+    """Run the EHS MCP Server using SSE transport.
+    
+    Uses the low-level ASGI interface for handle_post_message and connect_sse,
+    which is required by mcp >= 1.0 (scope/receive/send instead of Request).
+    """
     sse_transport = SseServerTransport("/messages")
-    async def handle_sse(request):
+
+    async def handle_sse(request: Request):
+        """SSE endpoint — client connects here to receive server events."""
         async with sse_transport.connect_sse(
             request.scope, request.receive, request._send
         ) as streams:
-            await app.run(streams[0], streams[1], app.create_initialization_options())
+            await app.run(
+                streams[0], streams[1], app.create_initialization_options()
+            )
+        return Response()
+
+    async def handle_messages(scope, receive, send):
+        """Message POST endpoint — passes raw ASGI scope/receive/send directly."""
+        await sse_transport.handle_post_message(scope, receive, send)
 
     starlette_app = Starlette(
         routes=[
             Route("/sse", endpoint=handle_sse),
-            Route("/messages", endpoint=sse_transport.handle_post_message),
+            # Use a raw ASGI route for /messages — avoids Starlette wrapping Request
+            Route("/messages", endpoint=handle_messages),
         ]
     )
+
     logger.info("EHS MCP Server running on SSE at http://%s:%s/sse", host, port)
     uvicorn.run(starlette_app, host=host, port=port)
 
