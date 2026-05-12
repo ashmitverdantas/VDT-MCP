@@ -2,7 +2,7 @@
 
 Provides CLI arguments to run the server using either stdio or SSE transport.
 """
-
+from dotenv import load_dotenv
 import argparse
 import asyncio
 import json
@@ -12,9 +12,9 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
-from starlette.applications import Starlette
-from starlette.routing import Route
 import uvicorn
+
+load_dotenv()
 
 from analyze_documents import (
     ANALYZE_DOCUMENTS_TOOL,
@@ -35,7 +35,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ehs-mcp-server")
 
-# ── Server bootstrap ──────────────────────────────────────────────────────────
+# ── MCP Server ────────────────────────────────────────────────────────────────
 
 app = Server("ehs-mcp-server")
 
@@ -71,7 +71,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     ]
 
 
-# ── Transport selection ───────────────────────────────────────────────────────
+# ── Transport ─────────────────────────────────────────────────────────────────
 
 async def run_stdio():
     async with stdio_server() as (read_stream, write_stream):
@@ -80,42 +80,44 @@ async def run_stdio():
 
 
 def run_sse(host: str, port: int):
-    sse_transport = SseServerTransport("/messages")
+    sse_transport = SseServerTransport("/messages/")
 
-    # ✅ Both routes must be raw ASGI functions (scope, receive, send)
-    # NOT Starlette Request objects — that's what caused the 'no attribute send' error
-
-    async def handle_sse(scope, receive, send):
-        """SSE endpoint — raw ASGI, not a Starlette Request handler."""
-        async with sse_transport.connect_sse(scope, receive, send) as streams:
-            await app.run(
-                streams[0], streams[1], app.create_initialization_options()
-            )
-
-    async def handle_messages(scope, receive, send):
-        """Message POST endpoint — raw ASGI."""
-        await sse_transport.handle_post_message(scope, receive, send)
-
-    starlette_app = Starlette(
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Route("/messages", endpoint=handle_messages, methods=["POST"]),
-        ]
-    )
+    # Pure ASGI class — bypasses Starlette routing entirely.
+    # Starlette always wraps endpoint functions into Request objects,
+    # which strips the 'send' callable. A plain ASGI class avoids this.
+    class ASGIApp:
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return
+            path = scope.get("path", "")
+            if path == "/sse":
+                async with sse_transport.connect_sse(scope, receive, send) as streams:
+                    await app.run(
+                        streams[0], streams[1],
+                        app.create_initialization_options()
+                    )
+            elif path.startswith("/messages"):
+                await sse_transport.handle_post_message(scope, receive, send)
+            else:
+                await send({
+                    "type": "http.response.start",
+                    "status": 404,
+                    "headers": [[b"content-type", b"text/plain"]],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b"Not found",
+                })
 
     logger.info("EHS MCP Server running on SSE at http://%s:%s/sse", host, port)
-    uvicorn.run(starlette_app, host=host, port=port)
+    uvicorn.run(ASGIApp(), host=host, port=port)
 
 
-# ── CLI entry point ───────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EHS MCP Server")
-    parser.add_argument(
-        "--transport",
-        choices=["stdio", "sse"],
-        default="stdio",
-    )
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()

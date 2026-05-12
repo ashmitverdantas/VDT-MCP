@@ -60,7 +60,6 @@ async def get_access_token() -> str:
         "client_secret": client_secret,
         "scope": "https://graph.microsoft.com/.default",
     }
-    print(token_url)
 
     resp_data = await asyncio.to_thread(_sync_post_form, token_url, payload, 30)
     data = json.loads(resp_data.decode("utf-8"))
