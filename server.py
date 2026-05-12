@@ -51,6 +51,7 @@ HANDLERS = {
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
+    """List all available tools."""
     return TOOLS
 
 

@@ -1,11 +1,3 @@
-"""
-processors/extractors.py
-────────────────────────
-One function per supported format. Each returns a plain string of extracted text.
-
-Supported formats:  pdf | docx | doc | xlsx | xls | jpg | png | gif | tiff | bmp | txt | csv
-"""
-
 from __future__ import annotations
 import io
 import logging
