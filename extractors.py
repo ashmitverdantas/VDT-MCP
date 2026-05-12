@@ -73,6 +73,7 @@ def extract_doc(data: bytes) -> str:
 # ── XLSX ──────────────────────────────────────────────────────────────────────
 
 def extract_xlsx(data: bytes) -> str:
+    """Extract text from XLSX files."""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     sheets: list[str] = []
@@ -90,6 +91,7 @@ def extract_xlsx(data: bytes) -> str:
 # ── XLS (legacy) ──────────────────────────────────────────────────────────────
 
 def extract_xls(data: bytes) -> str:
+    """Extract text from XLS files."""
     import xlrd
     wb = xlrd.open_workbook(file_contents=data)
     sheets: list[str] = []
@@ -116,14 +118,14 @@ def extract_image(data: bytes) -> str:
         return text.strip() or "[No readable text detected in image]"
     except ImportError:
         return "[OCR unavailable: install pytesseract + Tesseract]"
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         return f"[OCR failed: {e}]"
 
 
 # ── Plain text / CSV ──────────────────────────────────────────────────────────
 
 def extract_text(data: bytes) -> str:
-    """Extract text from image files using OCR."""
+    """Extract text from plain text files."""
     import chardet
     detected = chardet.detect(data)
     encoding = detected.get("encoding") or "utf-8"
@@ -172,6 +174,6 @@ def extract_text_from_bytes(fmt: str, data: bytes) -> str:
         return f"[Unsupported format: {fmt}]"
     try:
         return fn(data)
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         logger.error("Extraction failed for format '%s': %s", fmt, e, exc_info=True)
         return f"[Extraction error ({fmt}): {e}]"
