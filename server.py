@@ -1,3 +1,8 @@
+"""EHS MCP Server entry point.
+
+Provides CLI arguments to run the server using either stdio or SSE transport.
+"""
+
 import argparse
 import asyncio
 import json
