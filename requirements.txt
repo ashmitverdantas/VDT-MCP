@@ -1,7 +1,6 @@
 # EHS MCP Server — Python dependencies
 # Install with: pip install -r requirements.txt
 
-# MCP framework
 mcp
 
 # HTTP client (async)

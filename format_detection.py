@@ -7,11 +7,11 @@ Detect file format from a URL or raw bytes (magic bytes).
 import os
 from urllib.parse import urlparse, unquote
 
-# MIME / magic-byte signatures
+
 _MAGIC: list[tuple[bytes, str]] = [
     (b"%PDF", "pdf"),
-    (b"PK\x03\x04", "docx_or_xlsx"),   # Both docx and xlsx are ZIP-based
-    (b"\xd0\xcf\x11\xe0", "doc_or_xls"),  # OLE2 compound: .doc / .xls
+    (b"PK\x03\x04", "docx_or_xlsx"),
+    (b"\xd0\xcf\x11\xe0", "doc_or_xls"),
     (b"\xff\xd8\xff", "jpg"),
     (b"\x89PNG\r\n\x1a\n", "png"),
     (b"GIF87a", "gif"),

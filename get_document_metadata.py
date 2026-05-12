@@ -1,6 +1,4 @@
-"""
-tools/get_document_metadata.py
-──────────────────────────────
+"""──────────────────────────────
 MCP Tool: getDocumentMetadata
 
 Returns format, size, and content hash of a document WITHOUT
@@ -46,6 +44,7 @@ SUPPORTED_FORMATS = {
 
 
 async def handle_get_document_metadata(args: dict) -> dict[str, Any]:
+    '''Handler for getDocumentMetadata tool calls. Returns metadata or error info.'''
     url: str = args.get("documentUrl", "").strip()
     if not url:
         return {"error": "documentUrl is required."}
@@ -63,8 +62,8 @@ async def handle_get_document_metadata(args: dict) -> dict[str, Any]:
             "content_hash_sha256": hashlib.sha256(data).hexdigest(),
             "extraction_supported": fmt in SUPPORTED_FORMATS,
         }
-    except Exception as exc:
-        logger.error(f"getDocumentMetadata failed for {url}: {exc}", exc_info=True)
+    except (ValueError, OSError, RuntimeError) as exc:
+        logger.error("getDocumentMetadata failed for %s: %s", url, exc, exc_info=True)
         return {
             "schema_version": "1.0",
             "tool": "getDocumentMetadata",

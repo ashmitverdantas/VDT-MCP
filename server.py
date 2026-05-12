@@ -13,8 +13,6 @@ from mcp.server.stdio import stdio_server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
 from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response
 from starlette.routing import Route
 import uvicorn
 
@@ -56,13 +54,11 @@ HANDLERS = {
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
-    """List all available tools."""
     return TOOLS
 
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    """Handle tool calls by dispatching to the appropriate handler."""
     handler = HANDLERS.get(name)
     if handler is None:
         raise ValueError(f"Unknown tool: {name}")
@@ -78,39 +74,32 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 # ── Transport selection ───────────────────────────────────────────────────────
 
 async def run_stdio():
-    """Run the EHS MCP Server using stdio transport."""
     async with stdio_server() as (read_stream, write_stream):
         logger.info("EHS MCP Server running on stdio")
         await app.run(read_stream, write_stream, app.create_initialization_options())
 
 
 def run_sse(host: str, port: int):
-    """Run the EHS MCP Server using SSE transport.
-    
-    Uses the low-level ASGI interface for handle_post_message and connect_sse,
-    which is required by mcp >= 1.0 (scope/receive/send instead of Request).
-    """
     sse_transport = SseServerTransport("/messages")
 
-    async def handle_sse(request: Request):
-        """SSE endpoint — client connects here to receive server events."""
-        async with sse_transport.connect_sse(
-            request.scope, request.receive, request.send
-        ) as streams:
+    # ✅ Both routes must be raw ASGI functions (scope, receive, send)
+    # NOT Starlette Request objects — that's what caused the 'no attribute send' error
+
+    async def handle_sse(scope, receive, send):
+        """SSE endpoint — raw ASGI, not a Starlette Request handler."""
+        async with sse_transport.connect_sse(scope, receive, send) as streams:
             await app.run(
                 streams[0], streams[1], app.create_initialization_options()
             )
-        return Response()
 
     async def handle_messages(scope, receive, send):
-        """Message POST endpoint — passes raw ASGI scope/receive/send directly."""
+        """Message POST endpoint — raw ASGI."""
         await sse_transport.handle_post_message(scope, receive, send)
 
     starlette_app = Starlette(
         routes=[
             Route("/sse", endpoint=handle_sse),
-            # Use a raw ASGI route for /messages — avoids Starlette wrapping Request
-            Route("/messages", endpoint=handle_messages),
+            Route("/messages", endpoint=handle_messages, methods=["POST"]),
         ]
     )
 
@@ -126,10 +115,9 @@ if __name__ == "__main__":
         "--transport",
         choices=["stdio", "sse"],
         default="stdio",
-        help="Transport layer (stdio for local clients, sse for HTTP/remote)",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="SSE host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8080, help="SSE port (default: 8080)")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
 
     if args.transport == "sse":
