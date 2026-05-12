@@ -90,7 +90,7 @@ def run_sse(host: str, port: int):
     async def handle_sse(request: Request):
         """SSE endpoint — client connects here to receive server events."""
         async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send
+            request.scope, request.receive, request.send
         ) as streams:
             await app.run(
                 streams[0], streams[1], app.create_initialization_options()
