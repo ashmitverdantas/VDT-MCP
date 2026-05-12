@@ -87,7 +87,6 @@ def extract_xlsx(data: bytes) -> str:
     wb.close()
     return "\n\n".join(sheets)
 
-
 # ── XLS (legacy) ──────────────────────────────────────────────────────────────
 
 def extract_xls(data: bytes) -> str:
@@ -108,6 +107,7 @@ def extract_xls(data: bytes) -> str:
 # ── Images (OCR) ──────────────────────────────────────────────────────────────
 
 def extract_image(data: bytes) -> str:
+    """Extract text from image files using OCR."""
     try:
         import pytesseract
         from PIL import Image
@@ -123,6 +123,7 @@ def extract_image(data: bytes) -> str:
 # ── Plain text / CSV ──────────────────────────────────────────────────────────
 
 def extract_text(data: bytes) -> str:
+    """Extract text from image files using OCR."""
     import chardet
     detected = chardet.detect(data)
     encoding = detected.get("encoding") or "utf-8"
@@ -133,6 +134,7 @@ def extract_text(data: bytes) -> str:
 
 
 def extract_csv(data: bytes) -> str:
+    """Extract text from CSV files."""
     import csv, chardet
     detected = chardet.detect(data)
     encoding = detected.get("encoding") or "utf-8"
@@ -171,5 +173,5 @@ def extract_text_from_bytes(fmt: str, data: bytes) -> str:
     try:
         return fn(data)
     except Exception as e:
-        logger.error(f"Extraction failed for format '{fmt}': {e}", exc_info=True)
+        logger.error("Extraction failed for format '%s': %s", fmt, e, exc_info=True)
         return f"[Extraction error ({fmt}): {e}]"

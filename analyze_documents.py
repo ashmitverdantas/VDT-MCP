@@ -133,8 +133,8 @@ async def _process_single(url: str, include_raw: bool) -> dict[str, Any]:
         if include_raw:
             doc["text"] = extracted
 
-    except Exception as exc:
-        logger.error(f"Failed to process {url}: {exc}", exc_info=True)
+    except (ValueError, OSError, RuntimeError) as exc:
+        logger.error("Failed to process %s: %s", url, exc, exc_info=True)
         doc["error"] = str(exc)
 
     return doc
