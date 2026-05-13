@@ -7,11 +7,12 @@ from typing import Optional
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import re, base64
+from urllib.parse import urlparse, unquote, quote
 
 logger = logging.getLogger(__name__)
 
 _TOKEN_CACHE: dict = {"token": None, "expires_at": 0}
-
 
 def _get_env(key: str) -> str:
     val = os.getenv(key)
@@ -72,23 +73,99 @@ async def get_access_token() -> str:
 
 async def download_file(url: str) -> bytes:
     """
-    Download a file from SharePoint using a Bearer token.
-    Accepts direct SharePoint URLs or Microsoft Graph download URLs.
+    Download a SharePoint file via Microsoft Graph API.
+    Handles team sites, personal OneDrive, and sharing links.
     """
     token = await get_access_token()
     headers = {"Authorization": f"Bearer {token}"}
 
-    try:
-        return await asyncio.to_thread(_sync_get, url, headers, 120)
-    except HTTPError as exc:
-        if exc.code == 401:
-            _TOKEN_CACHE["token"] = None
-            token = await get_access_token()
-            headers["Authorization"] = f"Bearer {token}"
-            return await asyncio.to_thread(_sync_get, url, headers, 120)
-        raise
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    path = unquote(parsed.path)
 
+    # --- Sharing link (/:b:/, /:w:/, /:x:/) ---
+    if re.match(r"/:[a-z]:/", path):
+        encoded = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+        share_id = "u!" + encoded
+        graph_url = f"https://graph.microsoft.com/v1.0/shares/{share_id}/driveItem/content"
+        try:
+            return await asyncio.to_thread(_sync_get, graph_url, headers, 120)
+        except Exception as e:
+            raise ValueError(f"Sharing link download failed: {e}")
 
+    # --- Team site: /sites/SiteName/DocLib/path/file.ext ---
+    site_match = re.match(r"/sites/([^/]+)/(.*)", path)
+    if site_match:
+        site_name = site_match.group(1)
+        full_file_path = site_match.group(2)
+
+        # Resolve site ID
+        site_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/sites/{site_name}"
+        site_data_bytes = await asyncio.to_thread(_sync_get, site_url, headers, 30)
+        site_data = json.loads(site_data_bytes.decode("utf-8"))
+        site_id = site_data["id"]
+
+        # Split into: library name (e.g. "Shared Documents") + relative path
+        # e.g. "Shared Documents/[Ext]ESS_foo.pdf" → library="Shared Documents", rel="[Ext]ESS_foo.pdf"
+        path_parts = full_file_path.split("/", 1)
+        library_name = path_parts[0]
+        rel_path = path_parts[1] if len(path_parts) > 1 else ""
+
+        # Find the drive whose name matches the document library
+        drives_url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
+        drives_bytes = await asyncio.to_thread(_sync_get, drives_url, headers, 30)
+        drives = json.loads(drives_bytes.decode("utf-8")).get("value", [])
+
+        # SharePoint URLs always say "Shared Documents" but the Graph API
+        # drive is named "Documents" — map common aliases automatically.
+        _LIBRARY_ALIASES: dict[str, list[str]] = {
+            "shared documents": ["documents"],
+            "documents":        ["shared documents"],
+        }
+        candidates = [library_name.lower()] + _LIBRARY_ALIASES.get(library_name.lower(), [])
+
+        drive_id = None
+        for drive in drives:
+            if drive.get("name", "").lower() in candidates:
+                drive_id = drive["id"]
+                break
+
+        if not drive_id:
+            available = [d.get("name") for d in drives]
+            raise ValueError(
+                f"Could not find drive named '{library_name}' in site '{site_name}'. "
+                f"Available drives: {available}"
+            )
+
+        # Download using the resolved drive ID
+        encoded_rel_path = quote(rel_path, safe="/")
+        item_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{encoded_rel_path}:/content"
+        try:
+            return await asyncio.to_thread(_sync_get, item_url, headers, 120)
+        except Exception as e:
+            raise ValueError(f"Graph download failed for '{rel_path}': {e}")
+
+    # --- Personal OneDrive: /personal/user/Documents/... ---
+    personal_match = re.match(r"/personal/([^/]+)/(.*)", path)
+    if personal_match:
+        user_principal = personal_match.group(1)
+        file_path = personal_match.group(2)
+        if file_path.startswith("Documents/"):
+            file_path = file_path[len("Documents/"):]
+
+        site_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/personal/{user_principal}"
+        site_data_bytes = await asyncio.to_thread(_sync_get, site_url, headers, 30)
+        site_data = json.loads(site_data_bytes.decode("utf-8"))
+        site_id = site_data["id"]
+
+        encoded_file_path = quote(file_path, safe="/")
+        item_url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{encoded_file_path}:/content"
+        try:
+            return await asyncio.to_thread(_sync_get, item_url, headers, 120)
+        except Exception as e:
+            raise ValueError(f"Graph download failed for '{file_path}': {e}")
+
+    raise ValueError(f"Could not determine download method for URL: {url[:200]}")
 async def list_files_in_folder(
     site_id: str,
     drive_id: str,

@@ -5,6 +5,7 @@ import re
 from urllib.parse import urlparse, unquote
 from starlette.responses import JSONResponse
 import uvicorn
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -85,22 +86,62 @@ def _extract_file_path_from_url(url: str) -> dict:
             file_path = file_path[len("Documents/"):]
         result["file_path"] = file_path
         return result
-
-    # Team site: /sites/SiteName/DocLib/folder/file.pdf
+# --- Team site: /sites/SiteName/DocLib/folder/file.pdf ---
     site_match = re.match(r"/sites/([^/]+)/(.*)", path)
     if site_match:
-        result["type"] = "team_site"
-        result["site_path"] = site_match.group(1)
-        result["file_path"] = site_match.group(2)
-        return result
+        site_name = site_match.group(1)
+        file_path = site_match.group(2)
 
-    # Direct path with file extension
+        # Resolve site ID
+        site_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/sites/{site_name}"
+        site_data_bytes = await asyncio.to_thread(_sync_get, site_url, headers, 30)
+        site_data = json.loads(site_data_bytes.decode("utf-8"))
+        site_id = site_data["id"]
+
+        # Split into library name + relative file path
+        # e.g. "Shared Documents/folder/file.pdf"
+        #       → library="Shared Documents", rel_path="folder/file.pdf"
+        path_parts = file_path.split("/", 1)
+        library_name = path_parts[0]
+        rel_path = path_parts[1] if len(path_parts) > 1 else ""
+
+        # Find the drive matching the library display name
+        drives_url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
+        drives_bytes = await asyncio.to_thread(_sync_get, drives_url, headers, 30)
+        drives = json.loads(drives_bytes.decode("utf-8")).get("value", [])
+
+        drive_id = None
+        for drive in drives:
+            if drive.get("name", "").lower() == library_name.lower():
+                drive_id = drive["id"]
+                break
+
+        if not drive_id:
+            raise ValueError(
+                f"Could not find drive named '{library_name}' in site '{site_name}'. "
+                f"Available drives: {[d.get('name') for d in drives]}"
+            )
+
+        # Download file from the correct drive
+        encoded_rel_path = quote(rel_path, safe="/")
+        item_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{encoded_rel_path}:/content"
+        try:
+            return await asyncio.to_thread(_sync_get, item_url, headers, 120)
+        except Exception as e:
+            raise ValueError(
+                f"Graph download failed for '{rel_path}' in drive '{library_name}': {e}"
+            )
+
+    # --- Direct path with file extension (fallback) ---
     if re.search(r"\.\w{2,5}$", path):
-        result["type"] = "direct_path"
-        result["file_path"] = path
-        return result
+        encoded_path = quote(path, safe="/")
+        direct_url = f"https://{hostname}{encoded_path}"
+        try:
+            return await asyncio.to_thread(_sync_get, direct_url, headers, 120)
+        except Exception as e:
+            raise ValueError(f"Direct path download failed for '{path}': {e}")
 
-    return result
+    raise ValueError(f"Could not determine download method for URL: {url[:200]}")
 
 
 async def _download_via_graph(document_url: str) -> bytes:

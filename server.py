@@ -57,8 +57,8 @@ async def _get_graph_token() -> str:
     )
     payload = {
         "grant_type": "client_credentials",
-        "SHAREPOINT_CLIENT_ID": SHAREPOINT_CLIENT_ID,
-        "SHAREPOINT_CLIENT_SECRET": SHAREPOINT_CLIENT_SECRET,
+        "CLIENT_ID": SHAREPOINT_CLIENT_ID,
+        "CLIENT_SECRET": SHAREPOINT_CLIENT_SECRET,
         "scope": "https://graph.microsoft.com/.default",
     }
     async with httpx.AsyncClient() as client:
