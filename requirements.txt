@@ -25,3 +25,4 @@ chardet>=5.2.0
 
 # Utilities
 python-dotenv>=1.0.0        # Load .env file
+pypdf>=4.0.0
